@@ -30,6 +30,10 @@ echo ${all_parameter[*]} | grep -qE "deviceId@[0-9]+" && deviceId=$(echo ${all_p
 ## 1GB全国流量月包：  ff80808165afd2960165cdbc92470bef
 #####
 
+# 使用Github Action运行时需要传入参数来修改工作路径: githubaction
+workdirbase="/var/log/CnUnicom"
+echo ${all_parameter[*]} | grep -qE "githubaction" && workdirbase="$(pwd)/CnUnicom"
+
 # 联通APP版本
 unicom_version=8.0100
 
@@ -230,7 +234,7 @@ function liulactive() {
     [[ $choosenos == "" ]] && liulactive_only=true
     [[ "$liulactive_only" == "true" ]] || return 0
     # 激活请求
-    echo; echo $(date) liulactive..
+    echo; echo starting liulactive...
     curl -sA "$UA" -b $workdir/cookie -c $workdir/cookie_liulactive "https://m.client.10010.com/MyAccount/trafficController/myAccount.htm?flag=1&cUrl=https://m.client.10010.com/myPrizeForActivity/querywinninglist.htm?pageSign=1" >$workdir/liulactive.log
     liulactiveuserLogin="$(cat $workdir/liulactive.log | grep "refreshAccountTime" | grep -oE "[0-9_]+")"
     curl -sA "$UA" -b $workdir/cookie_liulactive -c $workdir/cookie_liulactive "https://m.client.10010.com/MyAccount/MyGiftBagController/refreshAccountTime.htm?userLogin=$liulactiveuserLogin&accountType=FLOW" >/dev/null
@@ -239,24 +243,20 @@ function liulactive() {
     curl -X POST -sA "$UA" -e "$Referer" -b $workdir/cookie_liulactive -c $workdir/cookie_liulactive --data "productId=$productId&userLogin=$liulactiveuserLogin&ebCount=1000000&pageFrom=4" "https://m.client.10010.com/MyAccount/exchangeDFlow/exchange.htm?userLogin=$liulactiveuserLogin" | grep -B 1 "正在为您激活"
 }
 
-function niujieactive() {
-    # 牛节活动2.1-2.18，需要传入参数niujieactive开启
-    echo ${all_parameter[*]} | grep -qE "niujieactive" || return 0
-    # cookie_niujie
-    rm -rf $workdir/cookie_niujie
-    curl -sLA "$UA" -e "$Referer" -b $workdir/cookie -c $workdir/cookie_niujie "https://u.10010.cn/qA7nJ?yw_code=&desmobile=${username}&version=android@${unicom_version}" >/dev/null
-    Referer="https://img.client.10010.com/2021springfestival/index.html"
-    curl -X POST -sA "$UA" -e "$Referer" -b $workdir/cookie_niujie -c $workdir/cookie_niujie "https://m.client.10010.com/Niujie/calf/CalfFirstPage?click=1" >$workdir/niujie.log
-    # 每日一次任务
-    taskIds=($(curl -X POST -sA "$UA" -e "$Referer" -b $workdir/cookie_niujie "https://m.client.10010.com/Niujie/task/getTaskList" | grep -oE "taskId[^,]+" | cut -f3 -d'"' | tr "\n" " "))
-    for taskId in ${taskIds[*]}; do
-        sleep 1 && curl -X POST -sA "$UA" -b $workdir/cookie_niujie --data "taskId=$taskId" "https://m.client.10010.com/Niujie/task/doTask" | grep -oE "任务已完成" && break
+function hfgoactive() {
+    # 话费购活动，需传入参数 hfgoactive
+    echo ${all_parameter[*]} | grep -qE "hfgoactive" || return 0
+    echo; echo starting hfgoactive...
+    curl -sLA "$UA" -b $workdir/cookie -c $workdir/cookie_hfgo "https://m.client.10010.com/mobileService/openPlatform/openPlatLineNew.htm?to_url=https://account.bol.wo.cn/cuuser/open/openLogin/hfgo&yw_code=&desmobile=${username}&version=android@${unicom_version}" >/dev/null
+    # 抽奖,每日免费3次,签到七天获得额外3次
+    ACTID="$(curl -X POST -sA "$UA" -b $workdir/cookie_hfgo --data "positionType=1" https://hfgo.wo.cn/hfgoapi/product/ad/list | grep -oE "atplottery[^?]*" | cut -f2 -d/)"
+    curl -sLA "$UA" -b $workdir/cookie_hfgo -c $workdir/cookie_hfgo "https://hfgo.wo.cn/hfgoapi/cuuser/auth/autoLogin?redirectUrl=https://atp.bol.wo.cn/atplottery/${ACTID}?product=hfgo&ch=002&$(cat $workdir/cookie_hfgo | grep -oE "[^_]token.*" | sed s/[[:space:]]//g | sed "s/token/Authorization=/")" >/dev/null
+    for ((i = 1; i <= 7; i++)); do
+        echo; curl -sA "$UA"  -b $workdir/cookie_hfgo "https://atp.bol.wo.cn/atpapi/act/lottery/start/v1/actPath/${ACTID}/0" >$workdir/lottery_hfgo.log
+        cat $workdir/lottery_hfgo.log && cat $workdir/lottery_hfgo.log | grep -qE "抽奖次数已用完" && break
     done
-    # 每小时可以收集各场馆1000牛气
-    shops=($(cat $workdir/niujie.log | grep -oE "[a-zA-Z]+ShopVenue\":\"1000" | grep -oE "[a-zA-Z]+" | tr "\n" " "))
-    for shop in ${shops[*]}; do
-        sleep 1 && echo geting $shop status: $(curl -sA "$UA" -e "$Referer" -b $workdir/cookie_niujie "https://m.client.10010.com/Niujie/calf/receiveCalf?shop=$shop" | grep -oE "message[^,]+")
-    done  
+    # 签到
+    echo; curl -sA "$UA"  -b $workdir/cookie_hfgo https://atp.bol.wo.cn/atpapi/act/actUserSign/everydaySign?actId=1516
 }
 
 function main() {
@@ -264,11 +264,11 @@ function main() {
     for ((u = 0; u < ${#all_username_password[*]}; u++)); do
         sleep $(shuf -i 1-10 -n 1)
         username=${all_username_password[u]%@*} && password=${all_username_password[u]#*@}
-        workdir="$(pwd)/CnUnicom_${username}" && [[ ! -d "$workdir" ]] && mkdir $workdir
+        workdir="${workdirbase}_${username}" && [[ ! -d "$workdir" ]] && mkdir $workdir
         userlogin && userlogin_ook[u]=$(echo ${username:0:2}****${username:9}) || { userlogin_err[u]=$(echo ${username:0:2}****${username:9}); continue; }
         membercenter
         liulactive
-        niujieactive
+        hfgoactive
         #rm -rf $workdir
     done
     echo; echo $(date) ${userlogin_err[*]} ${#userlogin_err[*]} 签到失败. ${userlogin_ook[*]} ${#userlogin_ook[*]} 签到完成.
